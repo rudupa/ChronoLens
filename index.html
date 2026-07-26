@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChronoLens — RTOS Scheduling Simulator</title>
+  <meta name="description" content="Interactive RTOS scheduling simulator. Visualize Rate Monotonic, EDF, Fixed Priority, and Round Robin scheduling on a live Gantt chart with deadline-miss and CPU-utilization analysis. Vanilla JS, no build." />
+  <meta name="author" content="Ritesh Udupa" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="title-block">
+      <h1><a class="title-link" href="index.html">ChronoLens</a></h1>
+      <p class="subtitle">RTOS Scheduling Simulator — Rate Monotonic · EDF · Fixed Priority · Round Robin</p>
+      <p class="byline">by <a href="https://www.linkedin.com/in/ritesh-udupa-4b694619/" target="_blank" rel="noopener">Ritesh Udupa</a></p>
+    </div>
+    <div class="controls">
+      <select id="algo" title="Scheduling algorithm">
+        <option value="rm">Rate Monotonic</option>
+        <option value="edf">Earliest Deadline First</option>
+        <option value="fp">Fixed Priority</option>
+        <option value="rr">Round Robin</option>
+      </select>
+      <button class="btn" id="btnRun">Run</button>
+      <button class="btn" id="btnStep">Step</button>
+      <button class="btn" id="btnReset">Reset</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Schedule (Gantt)</h2>
+      <canvas id="ganttCanvas" width="900" height="360"></canvas>
+    </section>
+
+    <aside class="panel">
+      <h2>Task set</h2>
+      <div id="taskList"></div>
+
+      <h2 style="margin-top:16px;">Metrics</h2>
+      <div id="metrics">
+        <div class="metric-row"><span>CPU utilization</span><span class="val" id="mUtil">—</span></div>
+        <div class="metric-row"><span>Deadline misses</span><span class="val" id="mMiss">—</span></div>
+        <div class="metric-row"><span>Schedulable (RM bound)</span><span class="val" id="mSched">—</span></div>
+        <div class="metric-row"><span>Sim time</span><span class="val" id="mTime">—</span></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <div>
+        <span>Created by <strong>Ritesh Udupa</strong></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://www.linkedin.com/in/ritesh-udupa-4b694619/" target="_blank" rel="noopener">LinkedIn</a>
+        <a href="https://github.com/rudupa" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+    <div class="footer-meta">
+      <span>&copy; <span id="footerYear">2026</span> Ritesh Udupa</span>
+      <span class="footer-dot">&middot;</span>
+      <span>ChronoLens — RTOS Scheduling Simulator</span>
+      <span class="footer-dot">&middot;</span>
+      <span>MIT License</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+  <script>document.getElementById('footerYear').textContent = new Date().getFullYear();</script>
+</body>
+</html>
