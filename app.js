@@ -56,7 +56,6 @@ const params = {
 };
 
 let activeCore = 0;
-let fileName = 'built-in starter set';
 
 // ---------- Entity helpers ----------
 function nextTaskColor() { return TASK_PALETTE[taskColorIdx++ % TASK_PALETTE.length]; }
@@ -403,7 +402,11 @@ function toMs(us) { return us / US_PER_MS; }
 function coreSummaryHtml(res) {
   const idlePct = (res.idleTime / (res.endTime || 1)) * 100;
   const peakMs = (res.peakStackTime || 0) / 1000;
+  const taskCount = res.entities.filter((e) => e.kind === 'task' && !e.isIdle).length;
+  const isrCount = res.entities.filter((e) => e.kind === 'isr').length;
   const chips = [
+    { label: 'Tasks', value: String(taskCount), cls: 'task' },
+    { label: 'ISRs', value: String(isrCount), cls: 'isr' },
     { label: 'CPU', value: pct(res.cpuUtilization), cls: res.cpuUtilization > 100 ? 'bad' : 'ok' },
     { label: 'Task', value: pct(res.taskLoad), cls: '' },
     { label: 'ISR', value: pct(res.isrLoad), cls: 'isr' },
@@ -520,40 +523,6 @@ function drawGantt(canvas, result) {
 function pct(v) { return `${v.toFixed(1)}%`; }
 function bytesFmt(v) { return v >= 1024 ? `${(v / 1024).toFixed(v % 1024 === 0 ? 0 : 1)} KB` : `${v} B`; }
 
-function renderSummary(results) {
-  const nCores = results.length || 1;
-  const window = (results[0] ? results[0].endTime : 0) || 1;
-  const cpu = results.reduce((s, r) => s + r.cpuUtilization, 0) / nCores;
-  const taskL = results.reduce((s, r) => s + r.taskLoad, 0) / nCores;
-  const isrL = results.reduce((s, r) => s + r.isrLoad, 0) / nCores;
-  const idleT = results.reduce((s, r) => s + r.idleTime, 0);
-  const idlePct = (idleT / (window * nCores)) * 100;
-  const misses = results.reduce((s, r) => s + r.totalDeadlineMisses, 0);
-  // Peak stack: worst core (stacks are per-core in a shared-stack model).
-  let peakCore = results[0] || { peakStack: 0, peakStackTime: 0, peakStackChain: [] };
-  for (const r of results) if (r.peakStack > peakCore.peakStack) peakCore = r;
-  const peakMs = (peakCore.peakStackTime || 0) / 1000;
-
-  const cpuLabel = nCores > 1 ? 'CPU util (avg)' : 'CPU utilization';
-  const metrics = [
-    { label: cpuLabel, value: pct(cpu), cls: cpu > 100 ? 'bad' : 'ok' },
-    { label: 'Task load', value: pct(taskL), cls: '' },
-    { label: 'ISR load', value: pct(isrL), cls: 'isr' },
-    { label: 'Idle', value: pct(idlePct), cls: '' },
-    { label: 'Deadline misses', value: String(misses), cls: misses > 0 ? 'bad' : 'ok' },
-    { label: `Peak stack @ ${peakMs.toFixed(peakMs >= 10 ? 0 : 2)} ms`, value: bytesFmt(peakCore.peakStack), cls: 'isr' },
-  ];
-  $('metrics').innerHTML = metrics.map((m) =>
-    `<div class="metric ${m.cls}"><div class="metric-value">${m.value}</div><div class="metric-label">${m.label}</div></div>`
-  ).join('');
-
-  const chain = peakCore.peakStackChain || [];
-  $('stackChain').innerHTML = chain.length
-    ? `<span class="stack-chain-label">Peak nesting (${chain.length}):</span> ${chain.join(' ▸ ')}`
-    : '';
-  $('stackChain').style.display = chain.length ? 'block' : 'none';
-}
-
 // ---------- Rendering: core tabs ----------
 function renderCoreTabs() {
   const bar = $('coreTabs');
@@ -629,12 +598,7 @@ function recompute() {
     results.push(simulate(coreEntities, params));
   }
   drawAllGantts(results);
-  renderSummary(results);
   renderRowStats(results);
-  const taskCount = entities.filter((e) => e.kind === 'task' && !e.isIdle).length;
-  const isrCount = entities.filter((e) => e.kind === 'isr').length;
-  $('badgeTasks').textContent = `${taskCount} tasks`;
-  $('badgeIsrs').textContent = `${isrCount} ISRs`;
   window._lastResults = results;
 }
 
@@ -721,8 +685,6 @@ $('fileInput').addEventListener('change', (e) => {
       const parsed = JSON.parse(String(reader.result));
       if (!parsed.entries || !Array.isArray(parsed.entries)) throw new Error('JSON must contain an "entries" array.');
       entities = buildFromRaw(parsed);
-      fileName = file.name;
-      $('fileName').textContent = fileName;
       setError(null);
       refreshAll();
     } catch (err) {
@@ -738,8 +700,6 @@ $('btnReset').addEventListener('click', () => {
   params.policy = 'FPP'; params.duration = 60000; params.higherNumberIsHigherPriority = true; params.cores = 1;
   activeCore = 0;
   $('policy').value = 'FPP'; $('duration').value = '60000'; $('prioOrder').checked = true; $('cores').value = '1';
-  fileName = 'built-in starter set';
-  $('fileName').textContent = fileName;
   setError(null);
   refreshAll();
 });
@@ -747,6 +707,5 @@ $('btnReset').addEventListener('click', () => {
 window.addEventListener('resize', () => { if (window._lastResults) drawAllGantts(window._lastResults); });
 
 // ---------- Init ----------
-$('fileName').textContent = fileName;
 entities = starterEntities();
 refreshAll();
