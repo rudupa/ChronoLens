@@ -4,135 +4,163 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChronoLens — RTOS Scheduling &amp; Timing Analyzer</title>
-  <meta name="description" content="Simulate and visualize RTOS task &amp; ISR scheduling in your browser. Fixed-priority, Rate Monotonic, Deadline Monotonic and EDF policies with a Gantt timeline, interrupt preemption, deadline-miss detection and peak stack analysis. Add/delete tasks &amp; ISRs or load an AUTOSAR JSON config. Vanilla JS, no upload, no build." />
+  <meta name="description" content="Interactive RTOS scheduling &amp; timing analyzer for embedded / automotive systems. Model tasks and ISRs, override period, priority, offset and runtime, and see preemption, deadline misses and peak stack on a live Gantt timeline. Fixed-priority, Rate Monotonic, Deadline Monotonic and EDF. Vanilla JS, no build, nothing uploaded." />
+  <meta name="keywords" content="RTOS, scheduling, real-time, task, ISR, interrupt, AUTOSAR, OSEK, rate monotonic, deadline monotonic, EDF, fixed priority, preemption, WCET, response time, stack usage, embedded, automotive, gantt" />
   <meta name="author" content="Ritesh Udupa" />
+  <link rel="canonical" href="https://rudupa.github.io/ChronoLens/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="ChronoLens — RTOS Scheduling &amp; Timing Analyzer" />
+  <meta property="og:description" content="Model RTOS tasks &amp; ISRs, override their timing, and see preemption, deadline misses and peak stack on a live Gantt timeline. Fixed-priority / RM / DM / EDF. Vanilla JS." />
+  <meta property="og:url" content="https://rudupa.github.io/ChronoLens/" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="app-header">
     <div class="title-block">
-      <h1><a class="title-link" href="index.html">ChronoLens</a></h1>
-      <p class="subtitle">RTOS Scheduling &amp; Timing Analyzer — tasks, ISRs, preemption &amp; deadlines, 100% client-side</p>
+      <h1><a class="title-link" href="index.html" title="ChronoLens — RTOS Scheduling &amp; Timing Analyzer">ChronoLens</a></h1>
+      <p class="subtitle">RTOS Scheduling &amp; Timing Analyzer &middot; Tasks &amp; ISRs &middot; Preemption, Deadlines &amp; Stack</p>
       <p class="byline">by <a href="https://www.linkedin.com/in/ritesh-udupa-4b694619/" target="_blank" rel="noopener">Ritesh Udupa</a></p>
     </div>
-    <div class="badges">
-      <span class="badge" id="badgeTasks">0 tasks</span>
-      <span class="badge isr" id="badgeIsrs">0 ISRs</span>
+
+    <!-- Simulation config (header, centered) -->
+    <div class="sim-inline">
+      <span class="sim-title">Simulation</span>
+      <label class="sim-field" title="How tasks are scheduled among themselves. ISRs always preempt tasks by interrupt priority level (IPL).">
+        <span class="sim-lbl">Policy</span>
+        <select id="policy">
+          <option value="FPP" selected>Fixed-Priority (AUTOSAR/OSEK)</option>
+          <option value="RM">Rate Monotonic</option>
+          <option value="DM">Deadline Monotonic</option>
+          <option value="EDF">Earliest Deadline First</option>
+        </select>
+      </label>
+      <label class="sim-field" title="Total simulated time window in microseconds. The Gantt axis is shown in milliseconds.">
+        <span class="sim-lbl">Duration <span class="unit">µs</span></span>
+        <input type="number" id="duration" value="60000" min="1000" step="1000" />
+      </label>
+      <label class="sim-field sim-chk" title="AUTOSAR/OSEK convention: a larger priority number means higher priority. Uncheck to treat a smaller number as higher priority.">
+        <span class="sim-lbl">Higher #=hi prio</span>
+        <input type="checkbox" id="prioOrder" checked />
+      </label>
+    </div>
+
+    <div class="sim-controls">
+      <label class="btn btn-primary upload-btn" title="Load an AUTOSAR-style Os_Tasks_Isrs_Properties.json config">
+        Load JSON…
+        <input type="file" id="fileInput" accept=".json,application/json" hidden />
+      </label>
+      <button id="btnReset" class="btn btn-ghost" title="Reset to the built-in starter set">⟲ Reset</button>
     </div>
   </header>
 
   <div class="error-banner" id="errorBanner" style="display:none;"></div>
 
-  <div class="layout">
-    <!-- Sidebar: controls + stats -->
-    <aside class="sidebar">
-      <section class="panel">
-        <div class="panel-title">Simulation</div>
+  <main class="layout">
+    <div class="main-row">
 
-        <div class="field">
-          <label for="policy">Scheduling policy</label>
-          <select id="policy">
-            <option value="FPP">Fixed-Priority Preemptive (AUTOSAR/OSEK)</option>
-            <option value="RM">Rate Monotonic</option>
-            <option value="DM">Deadline Monotonic</option>
-            <option value="EDF">Earliest Deadline First</option>
-          </select>
+      <!-- ================= CONFIG SIDEBAR ================= -->
+      <aside class="panel config-panel">
+        <h2>Analysis</h2>
+
+        <fieldset>
+          <legend>Configuration source</legend>
+          <div class="src-line">Source: <span id="fileName">built-in starter set</span></div>
+          <div class="badges">
+            <span class="badge" id="badgeTasks">0 tasks</span>
+            <span class="badge isr" id="badgeIsrs">0 ISRs</span>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>System summary</legend>
+          <div class="metrics" id="metrics"></div>
+          <div class="stack-chain" id="stackChain" style="display:none;"></div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Per-entity timing <span class="unit">(ms)</span></legend>
+          <div class="table-scroll">
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  <th>Entity</th><th>Type</th><th>Jobs</th><th>CPU%</th>
+                  <th>Resp avg</th><th>Resp max</th><th>Wait max</th><th>Miss</th>
+                </tr>
+              </thead>
+              <tbody id="statsBody"></tbody>
+            </table>
+          </div>
+        </fieldset>
+      </aside>
+
+      <!-- ================= WORKSPACE ================= -->
+      <section class="workspace">
+
+        <div class="panel">
+          <h2>Timeline <span class="hint">— execution, preemption, activations &amp; deadline misses (axis in ms)</span></h2>
+          <div class="legend">
+            <span class="legend-item"><span class="swatch exec"></span>execution</span>
+            <span class="legend-item"><span class="swatch pending"></span>pending / preempted</span>
+            <span class="legend-item"><span class="swatch activation"></span>activation</span>
+            <span class="legend-item"><span class="swatch miss"></span>deadline miss</span>
+            <span class="legend-item"><span class="swatch idle"></span>idle</span>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="ganttCanvas"></canvas>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="duration">Duration (µs)</label>
-          <input type="number" id="duration" min="1000" step="1000" value="60000" />
+        <div class="panel">
+          <h2>
+            Tasks &amp; ISRs
+            <span class="hint">— override any property; ISRs preempt tasks by IPL</span>
+            <span class="panel-actions">
+              <button class="btn btn-sm" id="btnAddTask" title="Add a new task">+ Task</button>
+              <button class="btn btn-sm" id="btnAddIsr" title="Add a new ISR">+ ISR</button>
+            </span>
+          </h2>
+          <div class="table-scroll">
+            <table class="entity-table">
+              <thead>
+                <tr>
+                  <th title="Include this entity in the simulation">On</th>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th title="Task priority, or ISR interrupt priority level (IPL)">Prio / IPL</th>
+                  <th title="First release time (µs)">Offset <span class="unit">µs</span></th>
+                  <th title="Activation period (µs); 0 = one-shot">Period <span class="unit">µs</span></th>
+                  <th title="Worst-case execution / runtime per job (µs)">Runtime <span class="unit">µs</span></th>
+                  <th title="Relative deadline (µs); blank = period">Deadline <span class="unit">µs</span></th>
+                  <th title="Stack size (bytes) for peak-stack analysis">Stack <span class="unit">B</span></th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="entityBody"></tbody>
+            </table>
+          </div>
+          <p class="hint hint-block">All times in microseconds (µs). Set <strong>Period = 0</strong> for a one-shot job. The <strong>idle</strong> task fills unused CPU time. ISRs always run above tasks, ordered by IPL; tasks run by the selected policy.</p>
         </div>
 
-        <label class="check-field">
-          <input type="checkbox" id="prioOrder" checked />
-          <span>Higher number = higher priority</span>
-        </label>
-
-        <div class="btn-row">
-          <label class="upload-btn">
-            Load JSON…
-            <input type="file" id="fileInput" accept=".json,application/json" hidden />
-          </label>
-          <button class="ghost-btn" id="btnReset">Reset</button>
-        </div>
-        <div class="file-name">Source: <span id="fileName">built-in starter set</span></div>
       </section>
-
-      <section class="panel">
-        <div class="panel-title">System summary</div>
-        <div class="metrics" id="metrics"></div>
-        <div class="stack-chain" id="stackChain" style="display:none;"></div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-title">Per-entity timing (times in ms)</div>
-        <div class="table-scroll">
-          <table class="stats-table">
-            <thead>
-              <tr>
-                <th>Entity</th><th>Type</th><th>Jobs</th><th>CPU%</th>
-                <th>Resp avg</th><th>Resp max</th><th>Wait max</th><th>Miss</th>
-              </tr>
-            </thead>
-            <tbody id="statsBody"></tbody>
-          </table>
-        </div>
-      </section>
-    </aside>
-
-    <!-- Main: Gantt + entity editor -->
-    <main class="main">
-      <section class="panel">
-        <div class="panel-title">Timeline (Gantt)</div>
-        <div class="legend">
-          <span class="legend-item"><span class="swatch exec"></span>execution</span>
-          <span class="legend-item"><span class="swatch pending"></span>pending / preempted</span>
-          <span class="legend-item"><span class="swatch activation"></span>activation</span>
-          <span class="legend-item"><span class="swatch miss"></span>deadline miss</span>
-          <span class="legend-item"><span class="swatch idle"></span>idle</span>
-        </div>
-        <div class="canvas-wrap">
-          <canvas id="ganttCanvas"></canvas>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-title">
-          Tasks &amp; ISRs
-          <span class="panel-actions">
-            <button class="ghost-btn" id="btnAddTask">+ Task</button>
-            <button class="ghost-btn" id="btnAddIsr">+ ISR</button>
-          </span>
-        </div>
-        <div class="table-scroll">
-          <table class="entity-table">
-            <thead>
-              <tr>
-                <th>On</th><th>Name</th><th>Type</th><th>Prio/IPL</th>
-                <th>Offset</th><th>Period</th><th>Exec</th><th>Stack</th><th></th>
-              </tr>
-            </thead>
-            <tbody id="entityBody"></tbody>
-          </table>
-        </div>
-        <p class="hint">All times in microseconds (µs). ISRs preempt tasks by interrupt priority level (IPL). Set period = 0 for a one-shot job. Priority column shows task priority or ISR IPL.</p>
-      </section>
-    </main>
-  </div>
+    </div>
+  </main>
 
   <footer class="app-footer">
     <div class="footer-inner">
-      <div><span>Created by <strong>Ritesh Udupa</strong></span></div>
+      <div class="footer-credit">
+        <span class="footer-by">Created by <strong>Ritesh Udupa</strong></span>
+        <span class="footer-role">Systems &amp; Software Architecture &middot; Safety-Critical &amp; Real-Time Systems &middot; ADAS/Autonomy</span>
+      </div>
       <div class="footer-links">
         <a href="https://www.linkedin.com/in/ritesh-udupa-4b694619/" target="_blank" rel="noopener">LinkedIn</a>
         <a href="https://github.com/rudupa" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/rudupa/ChronoLens" target="_blank" rel="noopener">Repository</a>
       </div>
     </div>
     <div class="footer-meta">
       <span>&copy; <span id="footerYear">2026</span> Ritesh Udupa</span>
       <span class="footer-dot">&middot;</span>
-      <span>ChronoLens</span>
+      <span>ChronoLens — RTOS Scheduling &amp; Timing Analyzer</span>
       <span class="footer-dot">&middot;</span>
       <span>MIT License</span>
     </div>

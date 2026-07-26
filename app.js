@@ -529,6 +529,7 @@ function renderEntityTable() {
       <td><input class="mini" type="number" min="0" data-f="offset" value="${e.offset}" ${off}></td>
       <td><input class="mini" type="number" min="0" data-f="period" value="${e.period}" ${off}></td>
       <td><input class="mini" type="number" min="0" data-f="exec" value="${e.exec}" ${off}></td>
+      <td><input class="mini" type="number" min="0" data-f="deadline" value="${e.deadline ?? ''}" placeholder="=period" title="Relative deadline (blank = period)" ${off}></td>
       <td><input class="mini" type="number" min="0" step="128" data-f="stack" value="${e.stackSize}"></td>
       <td><button class="row-del" data-del="${e.id}" title="Delete">✕</button></td>
     </tr>`;
@@ -584,6 +585,7 @@ $('entityBody').addEventListener('input', (e) => {
   const f = e.target.dataset.f;
   if (f === 'enabled') { ent.enabled = e.target.checked; tr.classList.toggle('row-off', !ent.enabled); recompute(); return; }
   if (f === 'name') { ent.name = e.target.value; recompute(); return; }
+  if (f === 'deadline') { ent.deadline = e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0); recompute(); return; }
   const num = Math.max(0, Number(e.target.value) || 0);
   if (f === 'prio') { if (ent.kind === 'isr') ent.ipl = num; else ent.priority = num; }
   else if (f === 'offset') ent.offset = num;
