@@ -224,6 +224,10 @@ th .unit { text-transform: none; letter-spacing: 0; }
 .entity-table input:disabled { opacity: .45; }
 .entity-table input::placeholder { color: #5f6b7c; }
 .entity-table .row-off td { opacity: .45; }
+.entity-table .st { font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.entity-table .row-bad td { background: rgba(248,81,73,.09); }
+.entity-table .row-bad .st-miss { color: var(--bad); font-weight: 700; }
+.col-sep, .entity-table .st-sep { border-left: 2px solid var(--border); }
 .row-del { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 5px; padding: 2px 7px; cursor: pointer; font-size: 13px; }
 .row-del:hover { color: var(--bad); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.1); }
 

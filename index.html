@@ -76,21 +76,6 @@
           <div class="metrics" id="metrics"></div>
           <div class="stack-chain" id="stackChain" style="display:none;"></div>
         </fieldset>
-
-        <fieldset>
-          <legend>Per-entity timing <span class="unit">(ms)</span></legend>
-          <div class="table-scroll">
-            <table class="stats-table">
-              <thead>
-                <tr>
-                  <th>Entity</th><th>Type</th><th>Jobs</th><th>CPU%</th>
-                  <th>Resp avg</th><th>Resp max</th><th>Wait max</th><th>Miss</th>
-                </tr>
-              </thead>
-              <tbody id="statsBody"></tbody>
-            </table>
-          </div>
-        </fieldset>
       </aside>
 
       <!-- ================= WORKSPACE ================= -->
@@ -113,7 +98,7 @@
         <div class="panel">
           <h2>
             Tasks &amp; ISRs
-            <span class="hint">— override any property; ISRs preempt tasks by IPL</span>
+            <span class="hint">— properties &amp; timing; override any value, ISRs preempt tasks by IPL</span>
             <span class="panel-actions">
               <button class="btn btn-sm" id="btnAddTask" title="Add a new task">+ Task</button>
               <button class="btn btn-sm" id="btnAddIsr" title="Add a new ISR">+ ISR</button>
@@ -132,13 +117,19 @@
                   <th title="Worst-case execution / runtime per job (µs)">Runtime <span class="unit">µs</span></th>
                   <th title="Relative deadline (µs); blank = period">Deadline <span class="unit">µs</span></th>
                   <th title="Stack size (bytes) for peak-stack analysis">Stack <span class="unit">B</span></th>
+                  <th class="col-sep" title="Jobs released in the window">Jobs</th>
+                  <th title="Share of CPU time consumed">CPU <span class="unit">%</span></th>
+                  <th title="Average response time (release → completion)">Resp avg <span class="unit">ms</span></th>
+                  <th title="Worst-case response time">Resp max <span class="unit">ms</span></th>
+                  <th title="Maximum waiting (interference) time">Wait max <span class="unit">ms</span></th>
+                  <th title="Deadline misses">Miss</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="entityBody"></tbody>
             </table>
           </div>
-          <p class="hint hint-block">All times in microseconds (µs). Set <strong>Period = 0</strong> for a one-shot job. The <strong>idle</strong> task fills unused CPU time. ISRs always run above tasks, ordered by IPL; tasks run by the selected policy.</p>
+          <p class="hint hint-block">All input times in microseconds (µs); timing results in ms. Set <strong>Period = 0</strong> for a one-shot job. The <strong>idle</strong> task fills unused CPU time. ISRs always run above tasks, ordered by IPL; tasks run by the selected policy.</p>
         </div>
 
       </section>

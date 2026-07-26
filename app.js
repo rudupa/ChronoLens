@@ -501,19 +501,9 @@ function renderSummary(result) {
     ? `<span class="stack-chain-label">Peak nesting (${result.peakStackChain.length}):</span> ${result.peakStackChain.join(' ▸ ')}`
     : '';
   $('stackChain').style.display = result.peakStackChain.length ? 'block' : 'none';
-
-  $('statsBody').innerHTML = result.stats.map((s) =>
-    `<tr class="${s.deadlineMisses > 0 ? 'row-bad' : ''}">` +
-    `<td class="ellipsis" title="${s.name}"><span class="dot" style="background:${s.color}"></span>${s.name}</td>` +
-    `<td>${s.kind === 'isr' ? '⚡ ISR' : 'task'}</td>` +
-    `<td>${s.jobs}</td><td>${s.utilization.toFixed(1)}</td>` +
-    `<td>${toMs(s.avgResponse).toFixed(2)}</td><td>${toMs(s.maxResponse).toFixed(2)}</td>` +
-    `<td>${toMs(s.maxWaiting).toFixed(2)}</td>` +
-    `<td>${s.deadlineMisses > 0 ? s.deadlineMisses : '·'}</td></tr>`
-  ).join('');
 }
 
-// ---------- Rendering: editable entity table ----------
+// ---------- Rendering: combined entity editor + per-entity timing table ----------
 function renderEntityTable() {
   const body = $('entityBody');
   body.innerHTML = entities.map((e) => {
@@ -531,9 +521,37 @@ function renderEntityTable() {
       <td><input class="mini" type="number" min="0" data-f="exec" value="${e.exec}" ${off}></td>
       <td><input class="mini" type="number" min="0" data-f="deadline" value="${e.deadline ?? ''}" placeholder="=period" title="Relative deadline (blank = period)" ${off}></td>
       <td><input class="mini" type="number" min="0" step="128" data-f="stack" value="${e.stackSize}"></td>
+      <td class="st st-sep st-jobs">·</td>
+      <td class="st st-cpu">·</td>
+      <td class="st st-ravg">·</td>
+      <td class="st st-rmax">·</td>
+      <td class="st st-wmax">·</td>
+      <td class="st st-miss">·</td>
       <td><button class="row-del" data-del="${e.id}" title="Delete">✕</button></td>
     </tr>`;
   }).join('');
+}
+
+// Update only the computed stat cells in place (keeps input focus while editing).
+function renderRowStats(result) {
+  const byId = new Map(result.stats.map((s) => [s.entityId, s]));
+  const rows = $('entityBody').querySelectorAll('tr[data-id]');
+  rows.forEach((tr) => {
+    const set = (cls, val) => { const td = tr.querySelector('.' + cls); if (td) td.textContent = val; };
+    const s = byId.get(tr.dataset.id);
+    if (!s) {
+      ['st-jobs', 'st-cpu', 'st-ravg', 'st-rmax', 'st-wmax', 'st-miss'].forEach((c) => set(c, '·'));
+      tr.classList.remove('row-bad');
+      return;
+    }
+    set('st-jobs', s.jobs);
+    set('st-cpu', s.utilization.toFixed(1));
+    set('st-ravg', toMs(s.avgResponse).toFixed(2));
+    set('st-rmax', toMs(s.maxResponse).toFixed(2));
+    set('st-wmax', toMs(s.maxWaiting).toFixed(2));
+    set('st-miss', s.deadlineMisses > 0 ? s.deadlineMisses : '·');
+    tr.classList.toggle('row-bad', s.deadlineMisses > 0);
+  });
 }
 
 // ---------- Recompute pipeline ----------
@@ -541,6 +559,7 @@ function recompute() {
   const result = simulate(entities, params);
   drawGantt(result);
   renderSummary(result);
+  renderRowStats(result);
   const taskCount = entities.filter((e) => e.kind === 'task' && !e.isIdle).length;
   const isrCount = entities.filter((e) => e.kind === 'isr').length;
   $('badgeTasks').textContent = `${taskCount} tasks`;
