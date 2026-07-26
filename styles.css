@@ -219,6 +219,7 @@ th .unit { text-transform: none; letter-spacing: 0; }
   font-size: 12px;
 }
 .entity-table input.mini { width: 72px; font-variant-numeric: tabular-nums; }
+.entity-table select.mini-select { width: 56px; padding: 3px 4px; font-family: inherit; }
 .entity-table input.name-in { width: 130px; }
 .entity-table input:focus { outline: none; border-color: var(--accent); }
 .entity-table input:disabled { opacity: .45; }
@@ -228,6 +229,39 @@ th .unit { text-transform: none; letter-spacing: 0; }
 .entity-table .row-bad td { background: rgba(248,81,73,.09); }
 .entity-table .row-bad .st-miss { color: var(--bad); font-weight: 700; }
 .col-sep, .entity-table .st-sep { border-left: 2px solid var(--border); }
+.entity-table.single-core .col-core { display: none; }
+
+/* ---------- Core tabs ---------- */
+.core-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.core-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  padding: 6px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: .12s;
+}
+.core-tab:hover { color: var(--text); border-color: var(--accent); }
+.core-tab.active { background: var(--panel); color: var(--accent); border-color: var(--border); border-bottom: 1px solid var(--panel); }
+.core-tab .tab-count {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
+.core-tab.active .tab-count { color: var(--accent); }
 .row-del { background: transparent; border: 1px solid transparent; color: var(--muted); border-radius: 5px; padding: 2px 7px; cursor: pointer; font-size: 13px; }
 .row-del:hover { color: var(--bad); border-color: rgba(248,81,73,.4); background: rgba(248,81,73,.1); }
 
@@ -236,6 +270,8 @@ th .unit { text-transform: none; letter-spacing: 0; }
 .hint-block strong { color: var(--text); }
 
 /* ---------- Gantt ---------- */
+.gantt-stack { display: flex; flex-direction: column; gap: 16px; }
+.core-gantt-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; letter-spacing: .3px; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; font-size: 11.5px; color: var(--muted); }
 .legend-item { display: flex; align-items: center; gap: 6px; }
 .swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
@@ -245,7 +281,7 @@ th .unit { text-transform: none; letter-spacing: 0; }
 .swatch.miss { background: rgba(248,81,73,.5); }
 .swatch.idle { background: rgba(120,128,140,.4); }
 .canvas-wrap { width: 100%; overflow-x: auto; }
-#ganttCanvas { width: 100%; display: block; }
+#ganttCanvas, .gantt-canvas { width: 100%; display: block; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {

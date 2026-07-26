@@ -52,8 +52,10 @@ const params = {
   policy: 'FPP',
   duration: 60000,
   higherNumberIsHigherPriority: true,
+  cores: 1,
 };
 
+let activeCore = 0;
 let fileName = 'built-in starter set';
 
 // ---------- Entity helpers ----------
@@ -80,6 +82,7 @@ function makeEntity(partial) {
     enabled: partial.enabled ?? true,
     oneShot: partial.oneShot ?? false,
     stackSize: partial.stackSize ?? (kind === 'isr' ? 512 : 2048),
+    core: partial.core ?? 0,
   };
 }
 
@@ -168,6 +171,7 @@ function buildFromRaw(config) {
       period, offset, exec, oneShot,
       triggerType: e.triggerType || (kind === 'isr' ? 'event' : 'time'),
       stackSize: parseInt(e.stackSize, 10) || 0,
+      core: parseInt(e.core, 10) || 0,
     });
   });
 }
@@ -341,7 +345,7 @@ function simulate(allEntities, p) {
 
   const isrLoad = stats.filter((s) => s.kind === 'isr').reduce((s, x) => s + x.totalCpu, 0);
   const taskLoad = stats.filter((s) => s.kind === 'task').reduce((s, x) => s + x.totalCpu, 0);
-  const idleTime = idleSegments.reduce((s, x) => s + (x.end - x.start), 0);
+  const idleTime = Math.max(0, window - taskLoad - isrLoad);
   const totalDeadlineMisses = stats.reduce((s, x) => s + x.deadlineMisses, 0);
 
   // Peak shared-stack usage (single-stack model; jobs nest under preemption).
@@ -395,8 +399,24 @@ const LANE_H = 30;
 
 function toMs(us) { return us / US_PER_MS; }
 
-function drawGantt(result) {
-  const canvas = $('ganttCanvas');
+// Rebuild one titled canvas per core and draw each core's schedule.
+function drawAllGantts(results) {
+  const stack = $('ganttStack');
+  if (stack.childElementCount !== results.length) {
+    stack.innerHTML = results.map((_, c) =>
+      `<div class="core-gantt"><div class="core-gantt-title" data-core="${c}">Core ${c}</div>` +
+      `<div class="canvas-wrap"><canvas class="gantt-canvas" data-core="${c}"></canvas></div></div>`
+    ).join('');
+  }
+  results.forEach((res, c) => {
+    const canvas = stack.querySelector(`canvas[data-core="${c}"]`);
+    const title = stack.querySelector(`.core-gantt-title[data-core="${c}"]`);
+    if (title) title.textContent = `Core ${c} — CPU ${res.cpuUtilization.toFixed(0)}%`;
+    if (canvas) drawGantt(canvas, res);
+  });
+}
+
+function drawGantt(canvas, result) {
   const lanes = result.laneNames.length || 1;
   const cssH = PAD_T + PAD_B + lanes * LANE_H;
   const cssW = canvas.clientWidth || 900;
@@ -482,31 +502,58 @@ function drawGantt(result) {
 function pct(v) { return `${v.toFixed(1)}%`; }
 function bytesFmt(v) { return v >= 1024 ? `${(v / 1024).toFixed(v % 1024 === 0 ? 0 : 1)} KB` : `${v} B`; }
 
-function renderSummary(result) {
-  const peakMs = result.peakStackTime / 1000;
-  const idlePct = (result.idleTime / (result.endTime || 1)) * 100;
+function renderSummary(results) {
+  const nCores = results.length || 1;
+  const window = (results[0] ? results[0].endTime : 0) || 1;
+  const cpu = results.reduce((s, r) => s + r.cpuUtilization, 0) / nCores;
+  const taskL = results.reduce((s, r) => s + r.taskLoad, 0) / nCores;
+  const isrL = results.reduce((s, r) => s + r.isrLoad, 0) / nCores;
+  const idleT = results.reduce((s, r) => s + r.idleTime, 0);
+  const idlePct = (idleT / (window * nCores)) * 100;
+  const misses = results.reduce((s, r) => s + r.totalDeadlineMisses, 0);
+  // Peak stack: worst core (stacks are per-core in a shared-stack model).
+  let peakCore = results[0] || { peakStack: 0, peakStackTime: 0, peakStackChain: [] };
+  for (const r of results) if (r.peakStack > peakCore.peakStack) peakCore = r;
+  const peakMs = (peakCore.peakStackTime || 0) / 1000;
+
+  const cpuLabel = nCores > 1 ? 'CPU util (avg)' : 'CPU utilization';
   const metrics = [
-    { label: 'CPU utilization', value: pct(result.cpuUtilization), cls: result.cpuUtilization > 100 ? 'bad' : 'ok' },
-    { label: 'Task load', value: pct(result.taskLoad), cls: '' },
-    { label: 'ISR load', value: pct(result.isrLoad), cls: 'isr' },
+    { label: cpuLabel, value: pct(cpu), cls: cpu > 100 ? 'bad' : 'ok' },
+    { label: 'Task load', value: pct(taskL), cls: '' },
+    { label: 'ISR load', value: pct(isrL), cls: 'isr' },
     { label: 'Idle', value: pct(idlePct), cls: '' },
-    { label: 'Deadline misses', value: String(result.totalDeadlineMisses), cls: result.totalDeadlineMisses > 0 ? 'bad' : 'ok' },
-    { label: `Peak stack @ ${peakMs.toFixed(peakMs >= 10 ? 0 : 2)} ms`, value: bytesFmt(result.peakStack), cls: 'isr' },
+    { label: 'Deadline misses', value: String(misses), cls: misses > 0 ? 'bad' : 'ok' },
+    { label: `Peak stack @ ${peakMs.toFixed(peakMs >= 10 ? 0 : 2)} ms`, value: bytesFmt(peakCore.peakStack), cls: 'isr' },
   ];
   $('metrics').innerHTML = metrics.map((m) =>
     `<div class="metric ${m.cls}"><div class="metric-value">${m.value}</div><div class="metric-label">${m.label}</div></div>`
   ).join('');
 
-  $('stackChain').innerHTML = result.peakStackChain.length
-    ? `<span class="stack-chain-label">Peak nesting (${result.peakStackChain.length}):</span> ${result.peakStackChain.join(' ▸ ')}`
+  const chain = peakCore.peakStackChain || [];
+  $('stackChain').innerHTML = chain.length
+    ? `<span class="stack-chain-label">Peak nesting (${chain.length}):</span> ${chain.join(' ▸ ')}`
     : '';
-  $('stackChain').style.display = result.peakStackChain.length ? 'block' : 'none';
+  $('stackChain').style.display = chain.length ? 'block' : 'none';
+}
+
+// ---------- Rendering: core tabs ----------
+function renderCoreTabs() {
+  const bar = $('coreTabs');
+  bar.innerHTML = Array.from({ length: params.cores }, (_, c) => {
+    const n = entities.filter((e) => (e.core || 0) === c && !(e.kind === 'task' && e.isIdle)).length;
+    return `<button class="core-tab ${c === activeCore ? 'active' : ''}" data-core="${c}">Core ${c}<span class="tab-count">${n}</span></button>`;
+  }).join('');
 }
 
 // ---------- Rendering: combined entity editor + per-entity timing table ----------
+function coreOptions(sel) {
+  return Array.from({ length: params.cores }, (_, c) => `<option value="${c}" ${c === sel ? 'selected' : ''}>${c}</option>`).join('');
+}
+
 function renderEntityTable() {
+  $('entityTable').classList.toggle('single-core', params.cores === 1);
   const body = $('entityBody');
-  body.innerHTML = entities.map((e) => {
+  body.innerHTML = entities.filter((e) => (e.core || 0) === activeCore).map((e) => {
     const off = e.isIdle ? 'disabled' : '';
     const prioTitle = e.kind === 'isr' ? 'Interrupt priority level (IPL)' : 'Task priority';
     const prioVal = e.kind === 'isr' ? e.ipl : e.priority;
@@ -515,6 +562,7 @@ function renderEntityTable() {
       <td><input type="checkbox" data-f="enabled" ${e.enabled ? 'checked' : ''}></td>
       <td><span class="dot" style="background:${e.color}"></span><input class="name-in" type="text" data-f="name" value="${e.name}" ${off}></td>
       <td>${typeLabel}</td>
+      <td class="col-core"><select class="mini mini-select" data-f="core" title="Assign to core">${coreOptions(e.core || 0)}</select></td>
       <td><input class="mini" type="number" min="0" data-f="prio" value="${prioVal}" title="${prioTitle}" ${off}></td>
       <td><input class="mini" type="number" min="0" data-f="offset" value="${e.offset}" ${off}></td>
       <td><input class="mini" type="number" min="0" data-f="period" value="${e.period}" ${off}></td>
@@ -533,8 +581,9 @@ function renderEntityTable() {
 }
 
 // Update only the computed stat cells in place (keeps input focus while editing).
-function renderRowStats(result) {
-  const byId = new Map(result.stats.map((s) => [s.entityId, s]));
+function renderRowStats(results) {
+  const byId = new Map();
+  for (const r of results) for (const s of r.stats) byId.set(s.entityId, s);
   const rows = $('entityBody').querySelectorAll('tr[data-id]');
   rows.forEach((tr) => {
     const set = (cls, val) => { const td = tr.querySelector('.' + cls); if (td) td.textContent = val; };
@@ -556,18 +605,24 @@ function renderRowStats(result) {
 
 // ---------- Recompute pipeline ----------
 function recompute() {
-  const result = simulate(entities, params);
-  drawGantt(result);
-  renderSummary(result);
-  renderRowStats(result);
+  const results = [];
+  for (let c = 0; c < params.cores; c++) {
+    const coreEntities = entities.filter((e) => (e.core || 0) === c);
+    results.push(simulate(coreEntities, params));
+  }
+  drawAllGantts(results);
+  renderSummary(results);
+  renderRowStats(results);
   const taskCount = entities.filter((e) => e.kind === 'task' && !e.isIdle).length;
   const isrCount = entities.filter((e) => e.kind === 'isr').length;
   $('badgeTasks').textContent = `${taskCount} tasks`;
   $('badgeIsrs').textContent = `${isrCount} ISRs`;
-  window._lastResult = result;
+  window._lastResults = results;
 }
 
 function refreshAll() {
+  if (activeCore >= params.cores) activeCore = 0;
+  renderCoreTabs();
   renderEntityTable();
   recompute();
 }
@@ -582,17 +637,34 @@ function setError(msg) {
 $('policy').addEventListener('change', (e) => { params.policy = e.target.value; recompute(); });
 $('duration').addEventListener('change', (e) => { params.duration = Math.max(1000, Number(e.target.value) || 1000); recompute(); });
 $('prioOrder').addEventListener('change', (e) => { params.higherNumberIsHigherPriority = e.target.checked; recompute(); });
+$('cores').addEventListener('change', (e) => {
+  const n = Math.max(1, Math.min(8, Math.round(Number(e.target.value) || 1)));
+  params.cores = n;
+  e.target.value = n;
+  entities.forEach((en) => { if ((en.core || 0) >= n) en.core = 0; });
+  if (activeCore >= n) activeCore = 0;
+  refreshAll();
+});
+
+$('coreTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.core-tab');
+  if (!btn) return;
+  activeCore = Number(btn.dataset.core) || 0;
+  renderCoreTabs();
+  renderEntityTable();
+  if (window._lastResults) renderRowStats(window._lastResults);
+});
 
 $('btnAddTask').addEventListener('click', () => {
   const n = entities.filter((x) => x.kind === 'task' && !x.isIdle).length + 1;
   const idleIdx = entities.findIndex((x) => x.isIdle);
-  const ent = makeEntity({ name: `Tsk_${n}`, kind: 'task', priority: 30, period: 10000, exec: 1000 });
+  const ent = makeEntity({ name: `Tsk_${n}`, kind: 'task', priority: 30, period: 10000, exec: 1000, core: activeCore });
   if (idleIdx >= 0) entities.splice(idleIdx, 0, ent); else entities.push(ent);
   refreshAll();
 });
 $('btnAddIsr').addEventListener('click', () => {
   const n = entities.filter((x) => x.kind === 'isr').length + 1;
-  entities.push(makeEntity({ name: `ISR_${n}`, kind: 'isr', ipl: 4, period: 5000, exec: 200 }));
+  entities.push(makeEntity({ name: `ISR_${n}`, kind: 'isr', ipl: 4, period: 5000, exec: 200, core: activeCore }));
   refreshAll();
 });
 
@@ -604,6 +676,7 @@ $('entityBody').addEventListener('input', (e) => {
   const f = e.target.dataset.f;
   if (f === 'enabled') { ent.enabled = e.target.checked; tr.classList.toggle('row-off', !ent.enabled); recompute(); return; }
   if (f === 'name') { ent.name = e.target.value; recompute(); return; }
+  if (f === 'core') { ent.core = Number(e.target.value) || 0; refreshAll(); return; }
   if (f === 'deadline') { ent.deadline = e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0); recompute(); return; }
   const num = Math.max(0, Number(e.target.value) || 0);
   if (f === 'prio') { if (ent.kind === 'isr') ent.ipl = num; else ent.priority = num; }
@@ -644,15 +717,16 @@ $('fileInput').addEventListener('change', (e) => {
 
 $('btnReset').addEventListener('click', () => {
   entities = starterEntities();
-  params.policy = 'FPP'; params.duration = 60000; params.higherNumberIsHigherPriority = true;
-  $('policy').value = 'FPP'; $('duration').value = '60000'; $('prioOrder').checked = true;
+  params.policy = 'FPP'; params.duration = 60000; params.higherNumberIsHigherPriority = true; params.cores = 1;
+  activeCore = 0;
+  $('policy').value = 'FPP'; $('duration').value = '60000'; $('prioOrder').checked = true; $('cores').value = '1';
   fileName = 'built-in starter set';
   $('fileName').textContent = fileName;
   setError(null);
   refreshAll();
 });
 
-window.addEventListener('resize', () => { if (window._lastResult) drawGantt(window._lastResult); });
+window.addEventListener('resize', () => { if (window._lastResults) drawAllGantts(window._lastResults); });
 
 // ---------- Init ----------
 $('fileName').textContent = fileName;

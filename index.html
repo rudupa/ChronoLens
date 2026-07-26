@@ -38,6 +38,10 @@
         <span class="sim-lbl">Duration <span class="unit">µs</span></span>
         <input type="number" id="duration" value="60000" min="1000" step="1000" />
       </label>
+      <label class="sim-field" title="Number of CPU cores. Tasks &amp; ISRs are partitioned per core; each core is scheduled independently with its own timeline.">
+        <span class="sim-lbl">Cores</span>
+        <input type="number" id="cores" value="1" min="1" max="8" step="1" />
+      </label>
       <label class="sim-field sim-chk" title="AUTOSAR/OSEK convention: a larger priority number means higher priority. Uncheck to treat a smaller number as higher priority.">
         <span class="sim-lbl">Higher #=hi prio</span>
         <input type="checkbox" id="prioOrder" checked />
@@ -82,7 +86,7 @@
       <section class="workspace">
 
         <div class="panel">
-          <h2>Timeline <span class="hint">— execution, preemption, activations &amp; deadline misses (axis in ms)</span></h2>
+          <h2>Timeline <span class="hint">— per core: execution, preemption, activations &amp; deadline misses (axis in ms)</span></h2>
           <div class="legend">
             <span class="legend-item"><span class="swatch exec"></span>execution</span>
             <span class="legend-item"><span class="swatch pending"></span>pending / preempted</span>
@@ -90,9 +94,7 @@
             <span class="legend-item"><span class="swatch miss"></span>deadline miss</span>
             <span class="legend-item"><span class="swatch idle"></span>idle</span>
           </div>
-          <div class="canvas-wrap">
-            <canvas id="ganttCanvas"></canvas>
-          </div>
+          <div id="ganttStack" class="gantt-stack"></div>
         </div>
 
         <div class="panel">
@@ -104,13 +106,15 @@
               <button class="btn btn-sm" id="btnAddIsr" title="Add a new ISR">+ ISR</button>
             </span>
           </h2>
+          <div id="coreTabs" class="core-tabs"></div>
           <div class="table-scroll">
-            <table class="entity-table">
+            <table class="entity-table" id="entityTable">
               <thead>
                 <tr>
                   <th title="Include this entity in the simulation">On</th>
                   <th>Name</th>
                   <th>Type</th>
+                  <th class="col-core" title="CPU core this entity runs on">Core</th>
                   <th title="Task priority, or ISR interrupt priority level (IPL)">Prio / IPL</th>
                   <th title="First release time (µs)">Offset <span class="unit">µs</span></th>
                   <th title="Activation period (µs); 0 = one-shot">Period <span class="unit">µs</span></th>

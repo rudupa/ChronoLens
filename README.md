@@ -15,10 +15,13 @@ Canvas — no build step, no dependencies, nothing leaves your machine.
 
 - **Tasks and ISRs.** ISRs preempt tasks by interrupt priority level (IPL); tasks are
   scheduled among themselves by the selected policy.
+- **Multi-core.** Choose 1–8 cores; tasks &amp; ISRs are partitioned per core and each core
+  is scheduled independently. Timelines are stacked one per core, and the editable
+  Tasks &amp; ISRs table is split into a tab per core (reassign an entity via its Core cell).
 - **Scheduling policies:** Fixed-Priority Preemptive (AUTOSAR/OSEK), Rate Monotonic
   (RM), Deadline Monotonic (DM), and Earliest Deadline First (EDF).
-- **Add / delete tasks &amp; ISRs** and edit every field inline (name, priority/IPL,
-  offset, period, execution time, stack size, enable/disable).
+- **Add / delete tasks &amp; ISRs** and edit every field inline (name, core, priority/IPL,
+  offset, period, execution time, deadline, stack size, enable/disable).
 - **Load a JSON config** in the AUTOSAR `Os_Tasks_Isrs_Properties.json` shape — see
   [`sample_tasks_isrs.json`](sample_tasks_isrs.json).
 - **Gantt timeline:** execution segments, pending/preempted spans, activation markers,
@@ -67,6 +70,7 @@ ISR:
 - `type`: `"task"` or `"isr"`.
 - `priority`: task priority as a number, or ISR level as `"IPL_x"`.
 - `triggerType`: `"time"` (periodic) or `"event"`.
+- `core` (optional): CPU core index the entity runs on (default `0`).
 - `constraints`: cycle-time and run-time bounds (µs) used to derive period/execution.
 - Any entry whose name matches `idle` becomes the idle task.
 
