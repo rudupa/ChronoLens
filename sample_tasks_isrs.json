@@ -1,0 +1,108 @@
+{
+  "generatedAt": "2026-01-01T00:00:00Z",
+  "sourceFile": "Os_Tasks_Isrs_Properties.json",
+  "notes": [
+    "Sample AUTOSAR-style task & ISR configuration for ChronoLens.",
+    "ISR priority is expressed as an interrupt priority level (IPL_x).",
+    "Times are in microseconds. Edit freely and re-upload."
+  ],
+  "counts": { "tasks": 5, "isrs": 3 },
+  "entries": [
+    {
+      "name": "SystemTimerISR",
+      "type": "isr",
+      "priority": "IPL_12",
+      "basicOrExtended": "basic",
+      "triggerType": "time",
+      "periodicity": "periodic",
+      "stackSize": 256,
+      "constraints": { "minCycleTime": 1000, "maxCycleTime": 1000, "averageCycleTime": 1000, "averageRunTime": 40, "maxRunTime": 60 },
+      "offset": 0,
+      "runtime": 40
+    },
+    {
+      "name": "CanRxISR",
+      "type": "isr",
+      "priority": "IPL_9",
+      "basicOrExtended": "basic",
+      "triggerType": "event",
+      "periodicity": "aperiodic",
+      "stackSize": 512,
+      "constraints": { "minCycleTime": 4000, "maxCycleTime": 20000, "averageCycleTime": 8000, "averageRunTime": 180, "maxRunTime": 240 },
+      "offset": 0,
+      "runtime": 220
+    },
+    {
+      "name": "AdcISR",
+      "type": "isr",
+      "priority": "IPL_7",
+      "basicOrExtended": "basic",
+      "triggerType": "event",
+      "periodicity": "periodic",
+      "stackSize": 512,
+      "constraints": { "minCycleTime": 8000, "maxCycleTime": 8000, "averageCycleTime": 8000, "averageRunTime": 280, "maxRunTime": 340 },
+      "offset": 0,
+      "runtime": 320
+    },
+    {
+      "name": "Tsk_5ms",
+      "type": "task",
+      "priority": "60",
+      "basicOrExtended": "extended",
+      "triggerType": "time",
+      "periodicity": "periodic",
+      "stackSize": 2048,
+      "constraints": { "minCycleTime": 5000, "maxCycleTime": 5000, "averageCycleTime": 5000, "averageRunTime": 800, "maxRunTime": 1000 },
+      "offset": 0,
+      "runtime": 1000
+    },
+    {
+      "name": "Tsk_10ms",
+      "type": "task",
+      "priority": "50",
+      "basicOrExtended": "extended",
+      "triggerType": "time",
+      "periodicity": "periodic",
+      "stackSize": 4096,
+      "constraints": { "minCycleTime": 10000, "maxCycleTime": 10000, "averageCycleTime": 10000, "averageRunTime": 1800, "maxRunTime": 2200 },
+      "offset": 0,
+      "runtime": 2200
+    },
+    {
+      "name": "Tsk_20ms",
+      "type": "task",
+      "priority": "40",
+      "basicOrExtended": "extended",
+      "triggerType": "time",
+      "periodicity": "periodic",
+      "stackSize": 4096,
+      "constraints": { "minCycleTime": 20000, "maxCycleTime": 20000, "averageCycleTime": 20000, "averageRunTime": 2600, "maxRunTime": 3000 },
+      "offset": 0,
+      "runtime": 3000
+    },
+    {
+      "name": "Tsk_CanRxHandler",
+      "type": "task",
+      "priority": "45",
+      "basicOrExtended": "extended",
+      "triggerType": "event",
+      "periodicity": "aperiodic",
+      "stackSize": 2048,
+      "constraints": { "minCycleTime": 4000, "maxCycleTime": 40000, "averageCycleTime": 12000, "averageRunTime": 600, "maxRunTime": 900 },
+      "offset": 0,
+      "runtime": 800
+    },
+    {
+      "name": "IdleTask",
+      "type": "task",
+      "priority": "0",
+      "basicOrExtended": "basic",
+      "triggerType": "time",
+      "periodicity": "periodic",
+      "stackSize": 512,
+      "constraints": { "minCycleTime": 0, "maxCycleTime": 0, "averageCycleTime": 0, "averageRunTime": 0, "maxRunTime": 0 },
+      "offset": 0,
+      "runtime": 0
+    }
+  ]
+}

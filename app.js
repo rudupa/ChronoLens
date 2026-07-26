@@ -1,254 +1,639 @@
 'use strict';
 
 /**
- * ChronoLens — RTOS Scheduling Simulator (starter scaffold)
+ * ChronoLens — RTOS Scheduling & Timing Analyzer
  *
- * A minimal but working preemptive scheduler over a fixed tick timeline,
- * rendered as a Gantt chart. Supports Rate Monotonic (RM), Earliest Deadline
- * First (EDF), Fixed Priority (FP) and Round Robin (RR).
+ * A single-page, vanilla-JS port of the Scheduler Timing Analyzer design:
+ * simulates OS task & ISR scheduling and visualizes activations, execution,
+ * preemption and interrupt interference on a Gantt timeline.
  *
- * Extend from here: add a task editor UI, jitter/offsets, release/response
- * time analysis, aperiodic servers, resource locking (PIP/PCP), etc.
+ * Features:
+ *   - Tasks and ISRs (ISRs preempt tasks by interrupt priority level / IPL).
+ *   - Scheduling policies: Fixed-Priority Preemptive (FPP), Rate Monotonic (RM),
+ *     Deadline Monotonic (DM), Earliest Deadline First (EDF).
+ *   - Add / delete tasks and ISRs, edit every field inline.
+ *   - Load a JSON config (AUTOSAR Os_Tasks_Isrs_Properties.json shape).
+ *   - Per-entity timing stats, CPU/ISR/idle load, deadline misses, peak stack.
+ *
+ * Times are in microseconds (µs) internally; the timeline axis is shown in ms.
+ * Everything runs client-side — nothing is uploaded.
  */
 
 const $ = (id) => document.getElementById(id);
+const EPS = 1e-6;
+const US_PER_MS = 1000;
 
-// Colors pulled from the shared theme (see styles.css).
-const TASK_COLORS = ['#f0b429', '#3fb950', '#a371f7', '#58a6ff', '#f85149'];
-
-// --- Default periodic task set: { name, period T, computation C, priority } ---
-// Deadlines are implicit (D = T). Edit or wire up a UI to change these.
-const DEFAULT_TASKS = [
-  { name: 'T1', T: 4, C: 1 },
-  { name: 'T2', T: 6, C: 2 },
-  { name: 'T3', T: 12, C: 3 },
+// ---------- Palettes (from the reference design) ----------
+const TASK_PALETTE = [
+  '#4F9DDE', '#43B98A', '#8E7DE3', '#3FBFBF', '#5C8AE6',
+  '#6FB65B', '#A98BE0', '#4CB0C9', '#7CA5F0', '#57C08A',
+  '#9C86D8', '#4AA6B8',
 ];
+const ISR_PALETTE = [
+  '#E4572E', '#F2913D', '#D64550', '#E8703A', '#C9455F',
+  '#EF8A46', '#DA5A2A', '#F0A03C',
+];
+const IDLE_COLOR = '#5a5f6a';
 
-const RR_QUANTUM = 1;
+const POLICY_LABELS = {
+  FPP: 'Fixed-Priority Preemptive (AUTOSAR/OSEK)',
+  RM: 'Rate Monotonic',
+  DM: 'Deadline Monotonic',
+  EDF: 'Earliest Deadline First',
+};
 
-let tasks = [];
-let timeline = [];   // per-tick: index of running task, or -1 for idle
-let missMarks = [];  // per-tick: true if a deadline miss occurred at this tick
-let hyperperiod = 0;
-let cursor = 0;      // current tick when stepping
-let running = false;
-let rafId = null;
+// ---------- App state ----------
+let entities = [];
+let idSeq = 1;
+let taskColorIdx = 0;
+let isrColorIdx = 0;
 
-const gcd = (a, b) => (b ? gcd(b, a % b) : a);
-const lcm = (a, b) => (a * b) / gcd(a, b);
+const params = {
+  policy: 'FPP',
+  duration: 60000,
+  higherNumberIsHigherPriority: true,
+};
 
-function initTasks() {
-  tasks = DEFAULT_TASKS.map((t, i) => ({
-    ...t,
-    D: t.T,                 // implicit deadline
-    color: TASK_COLORS[i % TASK_COLORS.length],
-  }));
-  hyperperiod = tasks.reduce((acc, t) => lcm(acc, t.T), 1);
+let fileName = 'built-in starter set';
+
+// ---------- Entity helpers ----------
+function nextTaskColor() { return TASK_PALETTE[taskColorIdx++ % TASK_PALETTE.length]; }
+function nextIsrColor() { return ISR_PALETTE[isrColorIdx++ % ISR_PALETTE.length]; }
+
+function makeEntity(partial) {
+  const kind = partial.kind || 'task';
+  const isIdle = !!partial.isIdle;
+  const color = partial.color || (kind === 'isr' ? nextIsrColor() : (isIdle ? IDLE_COLOR : nextTaskColor()));
+  return {
+    id: `e${idSeq++}`,
+    name: partial.name || (kind === 'isr' ? 'NewISR' : 'NewTask'),
+    kind,
+    priority: partial.priority ?? 10,
+    ipl: partial.ipl ?? 4,
+    period: partial.period ?? (kind === 'isr' ? 5000 : 10000),
+    offset: partial.offset ?? 0,
+    exec: partial.exec ?? (kind === 'isr' ? 200 : 1000),
+    deadline: partial.deadline,             // may be undefined -> derived
+    isIdle,
+    triggerType: partial.triggerType || (kind === 'isr' ? 'event' : 'time'),
+    color,
+    enabled: partial.enabled ?? true,
+    oneShot: partial.oneShot ?? false,
+    stackSize: partial.stackSize ?? (kind === 'isr' ? 512 : 2048),
+  };
 }
 
-/**
- * Simulate the whole hyperperiod for the chosen algorithm.
- * Produces `timeline` (running task per tick) and `missMarks`.
- */
-function simulate(algo) {
-  const jobs = [];   // active job instances: { taskIdx, remaining, deadline, arrival }
-  timeline = new Array(hyperperiod).fill(-1);
-  missMarks = new Array(hyperperiod).fill(false);
-  let rrPtr = 0;
-  let quantumLeft = RR_QUANTUM;
+/** Effective relative deadline (implicit-deadline model: D = period). */
+function relDeadline(e) {
+  if (e.deadline && e.deadline > 0) return e.deadline;
+  return e.period > 0 ? e.period : Infinity;
+}
 
-  for (let t = 0; t < hyperperiod; t++) {
-    // Release new jobs at their period boundaries.
-    tasks.forEach((task, idx) => {
-      if (t % task.T === 0) {
-        jobs.push({ taskIdx: idx, remaining: task.C, deadline: t + task.D, arrival: t });
-      }
+// ---------- Starter set ----------
+function starterEntities() {
+  idSeq = 1; taskColorIdx = 0; isrColorIdx = 0;
+  return [
+    // ISRs (preempt everything by IPL)
+    makeEntity({ name: 'CounterISR', kind: 'isr', ipl: 5, period: 1000, offset: 137, exec: 40, stackSize: 256, triggerType: 'time' }),
+    makeEntity({ name: 'CanRxISR', kind: 'isr', ipl: 8, period: 4000, offset: 274, exec: 220, stackSize: 512, triggerType: 'event' }),
+    makeEntity({ name: 'AdcISR', kind: 'isr', ipl: 6, period: 8000, offset: 411, exec: 320, stackSize: 512, triggerType: 'event' }),
+    // Tasks (higher priority number = higher priority, AUTOSAR default)
+    makeEntity({ name: 'Tsk_5ms', kind: 'task', priority: 60, period: 5000, offset: 0, exec: 1000, stackSize: 2048 }),
+    makeEntity({ name: 'Tsk_10ms', kind: 'task', priority: 50, period: 10000, offset: 0, exec: 2200, stackSize: 4096 }),
+    makeEntity({ name: 'Tsk_20ms', kind: 'task', priority: 40, period: 20000, offset: 0, exec: 3000, stackSize: 4096 }),
+    makeEntity({ name: 'Tsk_Background', kind: 'task', priority: 5, period: 50000, offset: 0, exec: 4000, stackSize: 1024 }),
+    // Idle
+    makeEntity({ name: 'IdleTask', kind: 'task', isIdle: true, priority: 0, period: 0, offset: 0, exec: 0, stackSize: 512 }),
+  ];
+}
+
+// ---------- JSON loading (AUTOSAR Os_Tasks_Isrs_Properties.json shape) ----------
+const BUILD_DEFAULTS = {
+  taskExec: 300, isrExec: 60, oneShotExec: 400,
+  eventPeriod: 6000, isrPeriod: 5000, systemTimerPeriod: 1000, systemTimerExec: 40,
+};
+
+function parseIpl(priority) {
+  const m = /IPL_?(\d+)/i.exec(String(priority));
+  return m ? parseInt(m[1], 10) : 0;
+}
+function pickCycle(c) {
+  if (!c) return null;
+  if (c.averageCycleTime > 0) return c.averageCycleTime;
+  if (c.minCycleTime > 0 && c.maxCycleTime > 0) return Math.round((c.minCycleTime + c.maxCycleTime) / 2);
+  if (c.minCycleTime > 0) return c.minCycleTime;
+  if (c.maxCycleTime > 0) return c.maxCycleTime;
+  return null;
+}
+function pickExecTask(e, oneShot) {
+  const c = e.constraints || {};
+  if (e.runtime > 0) return e.runtime;
+  if (c.maxRunTime > 0) return c.maxRunTime;
+  if (c.averageRunTime > 0) return c.averageRunTime;
+  return oneShot ? BUILD_DEFAULTS.oneShotExec : BUILD_DEFAULTS.taskExec;
+}
+
+function buildFromRaw(config) {
+  idSeq = 1; taskColorIdx = 0; isrColorIdx = 0;
+  let isrIndex = 0;
+  return (config.entries || []).map((e) => {
+    const isIdle = /idle/i.test(e.name);
+    const kind = e.type === 'isr' ? 'isr' : 'task';
+    const c = e.constraints || {};
+    let period, exec, oneShot = false;
+    let offset = e.offset ?? 0;
+    const isSystemTimer = /systemtimer|systimer|counterisr/i.test(e.name);
+
+    if (kind === 'isr') {
+      period = isSystemTimer ? BUILD_DEFAULTS.systemTimerPeriod : BUILD_DEFAULTS.isrPeriod;
+      exec = e.runtime > 0 ? e.runtime : (isSystemTimer ? BUILD_DEFAULTS.systemTimerExec : BUILD_DEFAULTS.isrExec);
+      if (!offset) offset = (isrIndex + 1) * 137;
+      isrIndex++;
+    } else if (isIdle) {
+      period = 0; exec = 0;
+    } else if (e.triggerType === 'event') {
+      period = c.minCycleTime > 0 ? c.minCycleTime : BUILD_DEFAULTS.eventPeriod;
+      exec = pickExecTask(e, false);
+    } else {
+      const cycle = pickCycle(c);
+      if (cycle > 0) { period = cycle; } else { period = 0; oneShot = true; }
+      exec = pickExecTask(e, oneShot);
+    }
+
+    const basePriority = parseInt(e.priority, 10) || 0;
+    return makeEntity({
+      name: e.name, kind, isIdle,
+      priority: basePriority,
+      ipl: kind === 'isr' ? parseIpl(e.priority) : 0,
+      period, offset, exec, oneShot,
+      triggerType: e.triggerType || (kind === 'isr' ? 'event' : 'time'),
+      stackSize: parseInt(e.stackSize, 10) || 0,
     });
-
-    // Drop/flag jobs whose deadline has passed with work remaining.
-    for (const job of jobs) {
-      if (t >= job.deadline && job.remaining > 0) missMarks[t] = true;
-    }
-
-    const ready = jobs.filter((j) => j.remaining > 0);
-    if (ready.length === 0) { timeline[t] = -1; continue; }
-
-    let chosen;
-    switch (algo) {
-      case 'rm': // shorter period => higher priority
-        chosen = ready.reduce((a, b) => (tasks[a.taskIdx].T <= tasks[b.taskIdx].T ? a : b));
-        break;
-      case 'edf': // earliest absolute deadline
-        chosen = ready.reduce((a, b) => (a.deadline <= b.deadline ? a : b));
-        break;
-      case 'fp': // lower task index => higher priority
-        chosen = ready.reduce((a, b) => (a.taskIdx <= b.taskIdx ? a : b));
-        break;
-      case 'rr': {
-        rrPtr = rrPtr % ready.length;
-        if (quantumLeft <= 0) { rrPtr = (rrPtr + 1) % ready.length; quantumLeft = RR_QUANTUM; }
-        chosen = ready[rrPtr];
-        quantumLeft--;
-        break;
-      }
-      default:
-        chosen = ready[0];
-    }
-
-    chosen.remaining -= 1;
-    timeline[t] = chosen.taskIdx;
-  }
+  });
 }
 
-// --- Rendering -------------------------------------------------------------
+// ---------- Simulation engine (discrete-event) ----------
+function orderLanes(list) {
+  const isrs = list.filter((e) => e.kind === 'isr').sort((a, b) => b.ipl - a.ipl);
+  const tasks = list.filter((e) => e.kind === 'task' && !e.isIdle).sort((a, b) => b.priority - a.priority);
+  const idle = list.filter((e) => e.isIdle);
+  return [...isrs, ...tasks, ...idle];
+}
 
-function fitCanvas(canvas) {
+function releasesFor(e, endTime) {
+  if (e.isIdle) return [];
+  if (e.period <= 0) return e.offset < endTime ? [e.offset] : [];
+  const out = [];
+  for (let t = e.offset; t < endTime; t += e.period) out.push(t);
+  return out;
+}
+
+function simulate(allEntities, p) {
+  const endTime = p.duration;
+  const ordered = orderLanes(allEntities);
+  const laneNames = ordered.map((e) => e.name);
+  const laneIndexOf = new Map();
+  ordered.forEach((e, i) => laneIndexOf.set(e.id, i));
+
+  const enabled = ordered.filter((e) => e.enabled);
+  const rts = new Map();
+  for (const e of enabled) {
+    rts.set(e.id, {
+      entity: e, laneIndex: laneIndexOf.get(e.id),
+      queue: [], nextJobId: 0, totalCpu: 0,
+      responseTimes: [], waitingTimes: [], jobsReleased: 0, jobsCompleted: 0, misses: 0,
+    });
+  }
+  const idleEntity = enabled.find((e) => e.isIdle) || null;
+
+  const releases = [];
+  for (const e of enabled) {
+    if (e.isIdle) continue;
+    const rt = rts.get(e.id);
+    for (const t of releasesFor(e, endTime)) releases.push({ time: t, rt });
+  }
+  releases.sort((a, b) => a.time - b.time);
+
+  const segments = [], spans = [], activations = [], idleSegments = [];
+  const effPriority = (e) => (p.higherNumberIsHigherPriority ? e.priority : -e.priority);
+
+  function moreUrgent(a, b) {
+    const ea = a.entity, eb = b.entity;
+    switch (p.policy) {
+      case 'RM': {
+        const pa = ea.period > 0 ? ea.period : Infinity;
+        const pb = eb.period > 0 ? eb.period : Infinity;
+        return pa < pb;
+      }
+      case 'DM': return relDeadline(ea) < relDeadline(eb);
+      case 'EDF': return a.queue[0].absDeadline < b.queue[0].absDeadline;
+      case 'FPP':
+      default: return effPriority(ea) > effPriority(eb);
+    }
+  }
+
+  function pickRunning() {
+    let bestIsr = null;
+    for (const rt of rts.values()) {
+      if (rt.entity.kind !== 'isr' || rt.queue.length === 0) continue;
+      if (!bestIsr || rt.entity.ipl > bestIsr.entity.ipl) bestIsr = rt;
+    }
+    if (bestIsr) return bestIsr;
+    let bestTask = null;
+    for (const rt of rts.values()) {
+      const e = rt.entity;
+      if (e.kind !== 'task' || e.isIdle || rt.queue.length === 0) continue;
+      if (!bestTask) { bestTask = rt; continue; }
+      if (moreUrgent(rt, bestTask)) bestTask = rt;
+    }
+    if (bestTask) return bestTask;
+    if (idleEntity) return rts.get(idleEntity.id);
+    return null;
+  }
+
+  let t = 0, ri = 0, curSegStart = 0, current = null;
+
+  function closeSegment(at) {
+    if (current && at > curSegStart + EPS) {
+      if (current.entity.isIdle) {
+        idleSegments.push({ start: curSegStart, end: at });
+      } else {
+        segments.push({
+          entityId: current.entity.id, name: current.entity.name, kind: current.entity.kind,
+          laneIndex: current.laneIndex, start: curSegStart, end: at,
+          jobId: current.queue.length ? current.queue[0].jobId : -1, color: current.entity.color,
+        });
+      }
+    }
+  }
+
+  let guard = 0;
+  const guardMax = (releases.length + 1) * 8 + 1000000;
+  while (t < endTime - EPS) {
+    if (guard++ > guardMax) break;
+
+    while (ri < releases.length && releases[ri].time <= t + EPS) {
+      const rel = releases[ri++];
+      const rt = rel.rt, e = rt.entity;
+      const rd = relDeadline(e);
+      const job = {
+        jobId: rt.nextJobId++, release: rel.time, remaining: e.exec,
+        absDeadline: rel.time + (rd === Infinity ? endTime : rd), started: false,
+      };
+      rt.queue.push(job);
+      rt.jobsReleased++;
+      activations.push({ entityId: e.id, laneIndex: rt.laneIndex, time: rel.time, jobId: job.jobId, kind: e.kind });
+    }
+
+    const next = pickRunning();
+    if (next !== current) { closeSegment(t); current = next; curSegStart = t; }
+
+    const nextRelease = ri < releases.length ? releases[ri].time : Infinity;
+    let completion = Infinity;
+    if (current && !current.entity.isIdle && current.queue.length) {
+      completion = t + current.queue[0].remaining;
+    }
+    const tNext = Math.min(nextRelease, completion, endTime);
+    const delta = tNext - t;
+    if (delta <= EPS && completion > tNext + EPS && nextRelease > tNext + EPS) break;
+
+    if (current && !current.entity.isIdle && current.queue.length && delta > 0) {
+      current.queue[0].remaining -= delta;
+      current.totalCpu += delta;
+    }
+    t = tNext;
+
+    if (current && !current.entity.isIdle && current.queue.length &&
+        current.queue[0].remaining <= EPS && Math.abs(completion - t) <= EPS + 1e-9) {
+      closeSegment(t);
+      const rt = current, job = rt.queue.shift();
+      const response = t - job.release;
+      const waiting = Math.max(0, response - rt.entity.exec);
+      rt.responseTimes.push(response);
+      rt.waitingTimes.push(waiting);
+      rt.jobsCompleted++;
+      const missed = t > job.absDeadline + EPS;
+      if (missed) rt.misses++;
+      spans.push({
+        entityId: rt.entity.id, laneIndex: rt.laneIndex, jobId: job.jobId,
+        release: job.release, completion: t, deadline: job.absDeadline,
+        responseTime: response, missed, kind: rt.entity.kind,
+      });
+      current = null; curSegStart = t;
+    }
+  }
+  closeSegment(Math.min(t, endTime));
+
+  const window = endTime || 1;
+  const stats = ordered.filter((e) => rts.has(e.id) && !e.isIdle).map((e) => {
+    const rt = rts.get(e.id);
+    const avg = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
+    const max = (a) => (a.length ? Math.max(...a) : 0);
+    return {
+      entityId: e.id, name: e.name, kind: e.kind, color: e.color,
+      jobs: rt.jobsReleased, completed: rt.jobsCompleted, totalCpu: rt.totalCpu,
+      utilization: (rt.totalCpu / window) * 100,
+      avgResponse: avg(rt.responseTimes), maxResponse: max(rt.responseTimes),
+      avgWaiting: avg(rt.waitingTimes), maxWaiting: max(rt.waitingTimes),
+      deadlineMisses: rt.misses,
+    };
+  });
+
+  const isrLoad = stats.filter((s) => s.kind === 'isr').reduce((s, x) => s + x.totalCpu, 0);
+  const taskLoad = stats.filter((s) => s.kind === 'task').reduce((s, x) => s + x.totalCpu, 0);
+  const idleTime = idleSegments.reduce((s, x) => s + (x.end - x.start), 0);
+  const totalDeadlineMisses = stats.reduce((s, x) => s + x.deadlineMisses, 0);
+
+  // Peak shared-stack usage (single-stack model; jobs nest under preemption).
+  const stackById = new Map(), nameById = new Map();
+  for (const e of ordered) { stackById.set(e.id, e.stackSize); nameById.set(e.id, e.name); }
+  const firstStart = new Map();
+  for (const seg of segments) {
+    if (seg.jobId < 0) continue;
+    const key = `${seg.entityId}#${seg.jobId}`;
+    const prev = firstStart.get(key);
+    if (prev === undefined || seg.start < prev) firstStart.set(key, seg.start);
+  }
+  const completionOf = new Map();
+  for (const sp of spans) completionOf.set(`${sp.entityId}#${sp.jobId}`, sp.completion);
+  const events = [];
+  for (const [key, start] of firstStart) {
+    const entityId = key.slice(0, key.lastIndexOf('#'));
+    const size = stackById.get(entityId) ?? 0;
+    const done = completionOf.get(key) ?? endTime;
+    if (done <= start) continue;
+    events.push({ time: start, delta: size, key });
+    events.push({ time: done, delta: -size, key });
+  }
+  events.sort((a, b) => (a.time - b.time) || (a.delta - b.delta));
+  let curStack = 0, peakStack = 0, peakStackTime = 0, peakActive = [];
+  const active = new Set();
+  for (const ev of events) {
+    if (ev.delta > 0) active.add(ev.key); else active.delete(ev.key);
+    curStack += ev.delta;
+    if (curStack > peakStack) {
+      peakStack = curStack; peakStackTime = ev.time;
+      peakActive = [...active].map((k) => nameById.get(k.slice(0, k.lastIndexOf('#'))) || '');
+    }
+  }
+
+  return {
+    entities: ordered, laneNames, segments, spans, activations, idleSegments, endTime, stats,
+    cpuUtilization: ((taskLoad + isrLoad) / window) * 100,
+    isrLoad: (isrLoad / window) * 100, taskLoad: (taskLoad / window) * 100,
+    idleTime, totalDeadlineMisses, peakStack, peakStackTime, peakStackChain: peakActive,
+  };
+}
+
+// ---------- Rendering: Gantt (canvas) ----------
+const SPAN_COLOR = 'rgba(255,255,255,0.10)';
+const SPAN_MISS_COLOR = 'rgba(228,87,46,0.22)';
+const IDLE_SPAN_COLOR = 'rgba(120,128,140,0.18)';
+const ACTIVATION_COLOR = '#f5d442';
+const PAD_L = 172, PAD_R = 22, PAD_T = 14, PAD_B = 40;
+const LANE_H = 30;
+
+function toMs(us) { return us / US_PER_MS; }
+
+function drawGantt(result) {
+  const canvas = $('ganttCanvas');
+  const lanes = result.laneNames.length || 1;
+  const cssH = PAD_T + PAD_B + lanes * LANE_H;
+  const cssW = canvas.clientWidth || 900;
   const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth;
-  const cssH = parseInt(canvas.getAttribute('height'), 10);
+  canvas.style.height = cssH + 'px';
   canvas.width = cssW * dpr;
   canvas.height = cssH * dpr;
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { ctx, w: cssW, h: cssH };
-}
+  ctx.clearRect(0, 0, cssW, cssH);
 
-function drawGantt() {
-  const canvas = $('ganttCanvas');
-  const { ctx, w, h } = fitCanvas(canvas);
-  ctx.clearRect(0, 0, w, h);
+  const plotW = cssW - PAD_L - PAD_R;
+  const end = result.endTime || 1;
+  const x = (tt) => PAD_L + (tt / end) * plotW;
+  const laneY = (i) => PAD_T + i * LANE_H;
+  const isIsr = result.entities.map((e) => e.kind === 'isr');
 
-  const padL = 46, padT = 20, padB = 26;
-  const rows = tasks.length;
-  const rowH = (h - padT - padB) / rows;
-  const colW = (w - padL - 10) / hyperperiod;
-
-  // Row labels + lanes.
-  ctx.font = '12px "Segoe UI", sans-serif';
+  // Lane backgrounds + labels
+  ctx.font = '11px "Segoe UI", sans-serif';
   ctx.textBaseline = 'middle';
-  tasks.forEach((task, i) => {
-    const y = padT + i * rowH;
-    ctx.fillStyle = '#8b98a9';
-    ctx.textAlign = 'right';
-    ctx.fillText(task.name, padL - 8, y + rowH / 2);
-    ctx.strokeStyle = '#2b3444';
-    ctx.strokeRect(padL, y, w - padL - 10, rowH);
-  });
-
-  // Execution blocks.
-  for (let t = 0; t < hyperperiod; t++) {
-    const idx = timeline[t];
-    if (idx < 0) continue;
-    const x = padL + t * colW;
-    const y = padT + idx * rowH;
-    ctx.fillStyle = tasks[idx].color;
-    ctx.fillRect(x + 0.5, y + 3, colW - 1, rowH - 6);
+  for (let i = 0; i < lanes; i++) {
+    const y = laneY(i);
+    ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.015)' : 'transparent';
+    ctx.fillRect(PAD_L, y, plotW, LANE_H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.beginPath(); ctx.moveTo(PAD_L, y + LANE_H); ctx.lineTo(PAD_L + plotW, y + LANE_H); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = isIsr[i] ? '#f0a03c' : '#c7cdd8';
+    const label = (isIsr[i] ? '⚡ ' : '') + result.laneNames[i];
+    ctx.fillText(label.length > 24 ? label.slice(0, 23) + '…' : label, 8, y + LANE_H / 2);
   }
 
-  // Deadline-miss markers.
-  for (let t = 0; t < hyperperiod; t++) {
-    if (!missMarks[t]) continue;
-    const x = padL + t * colW;
-    ctx.strokeStyle = '#f85149';
-    ctx.beginPath();
-    ctx.moveTo(x, padT);
-    ctx.lineTo(x, h - padB);
-    ctx.stroke();
-  }
-
-  // Time axis ticks.
-  ctx.fillStyle = '#8b98a9';
+  // Vertical time grid (every 5 ms major)
   ctx.textAlign = 'center';
-  const stride = Math.max(1, Math.round(hyperperiod / 20));
-  for (let t = 0; t <= hyperperiod; t += stride) {
-    const x = padL + t * colW;
-    ctx.fillText(String(t), x, h - padB / 2 + 4);
+  const majorUs = 5 * US_PER_MS;
+  for (let tt = 0; tt <= end + EPS; tt += majorUs) {
+    const px = x(tt);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.beginPath(); ctx.moveTo(px, PAD_T); ctx.lineTo(px, PAD_T + lanes * LANE_H); ctx.stroke();
+    ctx.fillStyle = '#8b93a4';
+    ctx.fillText(String(toMs(tt)), px, PAD_T + lanes * LANE_H + 14);
+  }
+  ctx.fillStyle = '#8b93a4';
+  ctx.textAlign = 'right';
+  ctx.fillText('time (ms)', cssW - PAD_R, PAD_T + lanes * LANE_H + 28);
+
+  // Idle spans
+  const idleLane = result.entities.findIndex((e) => e.isIdle);
+  if (idleLane >= 0) {
+    for (const s of result.idleSegments) {
+      const y = laneY(idleLane);
+      ctx.fillStyle = IDLE_SPAN_COLOR;
+      ctx.fillRect(x(s.start), y + LANE_H * 0.14, Math.max(x(s.end) - x(s.start), 0.5), LANE_H * 0.72);
+    }
   }
 
-  // Playhead when stepping.
-  if (cursor > 0 && cursor <= hyperperiod) {
-    const x = padL + cursor * colW;
-    ctx.strokeStyle = '#58a6ff';
+  // Pending / preempted spans (release -> completion)
+  for (const s of result.spans) {
+    const y = laneY(s.laneIndex);
+    ctx.fillStyle = s.missed ? SPAN_MISS_COLOR : SPAN_COLOR;
+    ctx.fillRect(x(s.release), y + LANE_H * 0.14, Math.max(x(s.completion) - x(s.release), 0.5), LANE_H * 0.72);
+  }
+
+  // Execution segments
+  for (const s of result.segments) {
+    const y = laneY(s.laneIndex);
+    ctx.fillStyle = s.color;
+    ctx.fillRect(x(s.start), y + LANE_H * 0.26, Math.max(x(s.end) - x(s.start), 0.6), LANE_H * 0.48);
+  }
+
+  // Activation markers (downward triangles at top of lane)
+  ctx.fillStyle = ACTIVATION_COLOR;
+  for (const a of result.activations) {
+    const y = laneY(a.laneIndex);
+    const px = x(a.time);
     ctx.beginPath();
-    ctx.moveTo(x, padT - 6);
-    ctx.lineTo(x, h - padB);
-    ctx.stroke();
+    ctx.moveTo(px - 4, y + 1); ctx.lineTo(px + 4, y + 1); ctx.lineTo(px, y + 8);
+    ctx.closePath(); ctx.fill();
   }
 }
 
-function renderTaskList() {
-  const el = $('taskList');
-  el.innerHTML = '';
-  tasks.forEach((task) => {
-    const row = document.createElement('div');
-    row.className = 'task-row';
-    row.innerHTML =
-      `<span class="swatch" style="background:${task.color}"></span>` +
-      `<span>${task.name}</span>` +
-      `<span class="task-meta">T=${task.T} · C=${task.C} · D=${task.D}</span>`;
-    el.appendChild(row);
-  });
+// ---------- Rendering: metrics + stats ----------
+function pct(v) { return `${v.toFixed(1)}%`; }
+function bytesFmt(v) { return v >= 1024 ? `${(v / 1024).toFixed(v % 1024 === 0 ? 0 : 1)} KB` : `${v} B`; }
+
+function renderSummary(result) {
+  const peakMs = result.peakStackTime / 1000;
+  const idlePct = (result.idleTime / (result.endTime || 1)) * 100;
+  const metrics = [
+    { label: 'CPU utilization', value: pct(result.cpuUtilization), cls: result.cpuUtilization > 100 ? 'bad' : 'ok' },
+    { label: 'Task load', value: pct(result.taskLoad), cls: '' },
+    { label: 'ISR load', value: pct(result.isrLoad), cls: 'isr' },
+    { label: 'Idle', value: pct(idlePct), cls: '' },
+    { label: 'Deadline misses', value: String(result.totalDeadlineMisses), cls: result.totalDeadlineMisses > 0 ? 'bad' : 'ok' },
+    { label: `Peak stack @ ${peakMs.toFixed(peakMs >= 10 ? 0 : 2)} ms`, value: bytesFmt(result.peakStack), cls: 'isr' },
+  ];
+  $('metrics').innerHTML = metrics.map((m) =>
+    `<div class="metric ${m.cls}"><div class="metric-value">${m.value}</div><div class="metric-label">${m.label}</div></div>`
+  ).join('');
+
+  $('stackChain').innerHTML = result.peakStackChain.length
+    ? `<span class="stack-chain-label">Peak nesting (${result.peakStackChain.length}):</span> ${result.peakStackChain.join(' ▸ ')}`
+    : '';
+  $('stackChain').style.display = result.peakStackChain.length ? 'block' : 'none';
+
+  $('statsBody').innerHTML = result.stats.map((s) =>
+    `<tr class="${s.deadlineMisses > 0 ? 'row-bad' : ''}">` +
+    `<td class="ellipsis" title="${s.name}"><span class="dot" style="background:${s.color}"></span>${s.name}</td>` +
+    `<td>${s.kind === 'isr' ? '⚡ ISR' : 'task'}</td>` +
+    `<td>${s.jobs}</td><td>${s.utilization.toFixed(1)}</td>` +
+    `<td>${toMs(s.avgResponse).toFixed(2)}</td><td>${toMs(s.maxResponse).toFixed(2)}</td>` +
+    `<td>${toMs(s.maxWaiting).toFixed(2)}</td>` +
+    `<td>${s.deadlineMisses > 0 ? s.deadlineMisses : '·'}</td></tr>`
+  ).join('');
 }
 
-function renderMetrics() {
-  const util = tasks.reduce((acc, t) => acc + t.C / t.T, 0);
-  const misses = missMarks.filter(Boolean).length;
-  const n = tasks.length;
-  const rmBound = n * (Math.pow(2, 1 / n) - 1); // Liu & Layland
-  $('mUtil').textContent = (util * 100).toFixed(1) + '%';
-  $('mMiss').textContent = String(misses);
-  $('mSched').textContent = util <= rmBound ? `yes (≤ ${(rmBound * 100).toFixed(1)}%)` : `check (> ${(rmBound * 100).toFixed(1)}%)`;
-  $('mTime').textContent = `${cursor} / ${hyperperiod}`;
+// ---------- Rendering: editable entity table ----------
+function renderEntityTable() {
+  const body = $('entityBody');
+  body.innerHTML = entities.map((e) => {
+    const off = e.isIdle ? 'disabled' : '';
+    const prioTitle = e.kind === 'isr' ? 'Interrupt priority level (IPL)' : 'Task priority';
+    const prioVal = e.kind === 'isr' ? e.ipl : e.priority;
+    const typeLabel = e.kind === 'isr' ? '⚡ ISR' : (e.isIdle ? 'idle' : 'task');
+    return `<tr data-id="${e.id}" class="${e.enabled ? '' : 'row-off'}">
+      <td><input type="checkbox" data-f="enabled" ${e.enabled ? 'checked' : ''}></td>
+      <td><span class="dot" style="background:${e.color}"></span><input class="name-in" type="text" data-f="name" value="${e.name}" ${off}></td>
+      <td>${typeLabel}</td>
+      <td><input class="mini" type="number" min="0" data-f="prio" value="${prioVal}" title="${prioTitle}" ${off}></td>
+      <td><input class="mini" type="number" min="0" data-f="offset" value="${e.offset}" ${off}></td>
+      <td><input class="mini" type="number" min="0" data-f="period" value="${e.period}" ${off}></td>
+      <td><input class="mini" type="number" min="0" data-f="exec" value="${e.exec}" ${off}></td>
+      <td><input class="mini" type="number" min="0" step="128" data-f="stack" value="${e.stackSize}"></td>
+      <td><button class="row-del" data-del="${e.id}" title="Delete">✕</button></td>
+    </tr>`;
+  }).join('');
 }
 
-function renderAll() { drawGantt(); renderTaskList(); renderMetrics(); }
-
-// --- Controls --------------------------------------------------------------
-
-function rebuild() {
-  initTasks();
-  simulate($('algo').value);
-  cursor = hyperperiod; // show full schedule by default
-  renderAll();
+// ---------- Recompute pipeline ----------
+function recompute() {
+  const result = simulate(entities, params);
+  drawGantt(result);
+  renderSummary(result);
+  const taskCount = entities.filter((e) => e.kind === 'task' && !e.isIdle).length;
+  const isrCount = entities.filter((e) => e.kind === 'isr').length;
+  $('badgeTasks').textContent = `${taskCount} tasks`;
+  $('badgeIsrs').textContent = `${isrCount} ISRs`;
+  window._lastResult = result;
 }
 
-function reset() {
-  running = false;
-  if (rafId) cancelAnimationFrame(rafId);
-  cursor = 0;
-  simulate($('algo').value);
-  renderAll();
+function refreshAll() {
+  renderEntityTable();
+  recompute();
 }
 
-function step() {
-  if (cursor < hyperperiod) cursor += 1;
-  renderAll();
+// ---------- Event wiring ----------
+function setError(msg) {
+  const el = $('errorBanner');
+  if (msg) { el.textContent = msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
 }
 
-function run() {
-  running = !running;
-  $('btnRun').textContent = running ? 'Pause' : 'Run';
-  if (running) loop();
-  else if (rafId) cancelAnimationFrame(rafId);
-}
+$('policy').addEventListener('change', (e) => { params.policy = e.target.value; recompute(); });
+$('duration').addEventListener('change', (e) => { params.duration = Math.max(1000, Number(e.target.value) || 1000); recompute(); });
+$('prioOrder').addEventListener('change', (e) => { params.higherNumberIsHigherPriority = e.target.checked; recompute(); });
 
-let lastAdvance = 0;
-function loop(ts) {
-  if (!running) return;
-  if (!ts) ts = performance.now();
-  if (ts - lastAdvance > 300) { // one tick per 300ms
-    lastAdvance = ts;
-    if (cursor < hyperperiod) cursor += 1;
-    else { running = false; $('btnRun').textContent = 'Run'; }
-    renderAll();
-  }
-  rafId = requestAnimationFrame(loop);
-}
+$('btnAddTask').addEventListener('click', () => {
+  const n = entities.filter((x) => x.kind === 'task' && !x.isIdle).length + 1;
+  const idleIdx = entities.findIndex((x) => x.isIdle);
+  const ent = makeEntity({ name: `Tsk_${n}`, kind: 'task', priority: 30, period: 10000, exec: 1000 });
+  if (idleIdx >= 0) entities.splice(idleIdx, 0, ent); else entities.push(ent);
+  refreshAll();
+});
+$('btnAddIsr').addEventListener('click', () => {
+  const n = entities.filter((x) => x.kind === 'isr').length + 1;
+  entities.push(makeEntity({ name: `ISR_${n}`, kind: 'isr', ipl: 4, period: 5000, exec: 200 }));
+  refreshAll();
+});
 
-$('algo').addEventListener('change', rebuild);
-$('btnRun').addEventListener('click', run);
-$('btnStep').addEventListener('click', () => { running = false; $('btnRun').textContent = 'Run'; step(); });
-$('btnReset').addEventListener('click', reset);
-window.addEventListener('resize', () => renderAll());
+$('entityBody').addEventListener('input', (e) => {
+  const tr = e.target.closest('tr');
+  if (!tr) return;
+  const ent = entities.find((x) => x.id === tr.dataset.id);
+  if (!ent) return;
+  const f = e.target.dataset.f;
+  if (f === 'enabled') { ent.enabled = e.target.checked; tr.classList.toggle('row-off', !ent.enabled); recompute(); return; }
+  if (f === 'name') { ent.name = e.target.value; recompute(); return; }
+  const num = Math.max(0, Number(e.target.value) || 0);
+  if (f === 'prio') { if (ent.kind === 'isr') ent.ipl = num; else ent.priority = num; }
+  else if (f === 'offset') ent.offset = num;
+  else if (f === 'period') ent.period = num;
+  else if (f === 'exec') ent.exec = num;
+  else if (f === 'stack') ent.stackSize = num;
+  recompute();
+});
 
-rebuild();
+$('entityBody').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-del]');
+  if (!btn) return;
+  entities = entities.filter((x) => x.id !== btn.dataset.del);
+  refreshAll();
+});
+
+$('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      if (!parsed.entries || !Array.isArray(parsed.entries)) throw new Error('JSON must contain an "entries" array.');
+      entities = buildFromRaw(parsed);
+      fileName = file.name;
+      $('fileName').textContent = fileName;
+      setError(null);
+      refreshAll();
+    } catch (err) {
+      setError(`Failed to load: ${err.message}`);
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+$('btnReset').addEventListener('click', () => {
+  entities = starterEntities();
+  params.policy = 'FPP'; params.duration = 60000; params.higherNumberIsHigherPriority = true;
+  $('policy').value = 'FPP'; $('duration').value = '60000'; $('prioOrder').checked = true;
+  fileName = 'built-in starter set';
+  $('fileName').textContent = fileName;
+  setError(null);
+  refreshAll();
+});
+
+window.addEventListener('resize', () => { if (window._lastResult) drawGantt(window._lastResult); });
+
+// ---------- Init ----------
+$('fileName').textContent = fileName;
+entities = starterEntities();
+refreshAll();
