@@ -400,18 +400,36 @@ const LANE_H = 30;
 function toMs(us) { return us / US_PER_MS; }
 
 // Rebuild one titled canvas per core and draw each core's schedule.
+function coreSummaryHtml(res) {
+  const idlePct = (res.idleTime / (res.endTime || 1)) * 100;
+  const peakMs = (res.peakStackTime || 0) / 1000;
+  const chips = [
+    { label: 'CPU', value: pct(res.cpuUtilization), cls: res.cpuUtilization > 100 ? 'bad' : 'ok' },
+    { label: 'Task', value: pct(res.taskLoad), cls: '' },
+    { label: 'ISR', value: pct(res.isrLoad), cls: 'isr' },
+    { label: 'Idle', value: pct(idlePct), cls: '' },
+    { label: 'Miss', value: String(res.totalDeadlineMisses), cls: res.totalDeadlineMisses > 0 ? 'bad' : 'ok' },
+    { label: `Peak stack @ ${peakMs.toFixed(peakMs >= 10 ? 0 : 2)} ms`, value: bytesFmt(res.peakStack), cls: 'isr' },
+  ];
+  return chips.map((m) =>
+    `<span class="core-chip ${m.cls}"><span class="core-chip-label">${m.label}</span><span class="core-chip-value">${m.value}</span></span>`
+  ).join('');
+}
+
 function drawAllGantts(results) {
   const stack = $('ganttStack');
   if (stack.childElementCount !== results.length) {
     stack.innerHTML = results.map((_, c) =>
-      `<div class="core-gantt"><div class="core-gantt-title" data-core="${c}">Core ${c}</div>` +
+      `<div class="core-gantt">` +
+      `<div class="core-gantt-head"><span class="core-gantt-title" data-core="${c}">Core ${c}</span>` +
+      `<span class="core-summary" data-core="${c}"></span></div>` +
       `<div class="canvas-wrap"><canvas class="gantt-canvas" data-core="${c}"></canvas></div></div>`
     ).join('');
   }
   results.forEach((res, c) => {
     const canvas = stack.querySelector(`canvas[data-core="${c}"]`);
-    const title = stack.querySelector(`.core-gantt-title[data-core="${c}"]`);
-    if (title) title.textContent = `Core ${c} — CPU ${res.cpuUtilization.toFixed(0)}%`;
+    const summary = stack.querySelector(`.core-summary[data-core="${c}"]`);
+    if (summary) summary.innerHTML = coreSummaryHtml(res);
     if (canvas) drawGantt(canvas, res);
   });
 }

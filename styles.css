@@ -271,7 +271,32 @@ th .unit { text-transform: none; letter-spacing: 0; }
 
 /* ---------- Gantt ---------- */
 .gantt-stack { display: flex; flex-direction: column; gap: 16px; }
-.core-gantt-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; letter-spacing: .3px; }
+.core-gantt-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+}
+.core-gantt-title { font-size: 12px; font-weight: 700; color: var(--text); letter-spacing: .3px; }
+.core-summary { display: flex; flex-wrap: wrap; gap: 5px; }
+.core-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.core-chip-label { color: var(--muted); }
+.core-chip-value { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.core-chip.bad .core-chip-value { color: var(--bad); }
+.core-chip.ok .core-chip-value { color: var(--ok); }
+.core-chip.isr .core-chip-value { color: var(--isr); }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 10px; font-size: 11.5px; color: var(--muted); }
 .legend-item { display: flex; align-items: center; gap: 6px; }
 .swatch { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
