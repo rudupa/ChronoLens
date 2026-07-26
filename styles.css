@@ -114,6 +114,7 @@ body {
 .btn-primary:hover:not(:disabled) { background: #79b8ff; }
 .btn-ghost { background: transparent; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-off { opacity: .6; border-style: dashed; }
 .upload-btn { display: inline-flex; align-items: center; }
 
 /* ---------- Error banner ---------- */

@@ -56,6 +56,7 @@ const params = {
 };
 
 let activeCore = 0;
+const showKind = { task: true, isr: true };
 
 // ---------- Entity helpers ----------
 function nextTaskColor() { return TASK_PALETTE[taskColorIdx++ % TASK_PALETTE.length]; }
@@ -540,7 +541,10 @@ function coreOptions(sel) {
 function renderEntityTable() {
   $('entityTable').classList.toggle('single-core', params.cores === 1);
   const body = $('entityBody');
-  body.innerHTML = entities.filter((e) => (e.core || 0) === activeCore).map((e) => {
+  body.innerHTML = entities
+    .filter((e) => (e.core || 0) === activeCore)
+    .filter((e) => (e.kind === 'isr' ? showKind.isr : showKind.task))
+    .map((e) => {
     const off = e.isIdle ? 'disabled' : '';
     const prioTitle = e.kind === 'isr' ? 'Interrupt priority level (IPL)' : 'Task priority';
     const prioVal = e.kind === 'isr' ? e.ipl : e.priority;
@@ -650,6 +654,15 @@ $('btnAddIsr').addEventListener('click', () => {
   refreshAll();
 });
 
+function updateToggleButtons() {
+  $('btnToggleTasks').textContent = showKind.task ? 'Hide tasks' : 'Show tasks';
+  $('btnToggleTasks').classList.toggle('btn-off', !showKind.task);
+  $('btnToggleIsrs').textContent = showKind.isr ? 'Hide ISRs' : 'Show ISRs';
+  $('btnToggleIsrs').classList.toggle('btn-off', !showKind.isr);
+}
+$('btnToggleTasks').addEventListener('click', () => { showKind.task = !showKind.task; updateToggleButtons(); renderEntityTable(); if (window._lastResults) renderRowStats(window._lastResults); });
+$('btnToggleIsrs').addEventListener('click', () => { showKind.isr = !showKind.isr; updateToggleButtons(); renderEntityTable(); if (window._lastResults) renderRowStats(window._lastResults); });
+
 $('entityBody').addEventListener('input', (e) => {
   const tr = e.target.closest('tr');
   if (!tr) return;
@@ -700,6 +713,8 @@ $('btnReset').addEventListener('click', () => {
   params.policy = 'FPP'; params.duration = 60000; params.higherNumberIsHigherPriority = true; params.cores = 1;
   activeCore = 0;
   $('policy').value = 'FPP'; $('duration').value = '60000'; $('prioOrder').checked = true; $('cores').value = '1';
+  showKind.task = true; showKind.isr = true;
+  updateToggleButtons();
   setError(null);
   refreshAll();
 });
@@ -708,4 +723,5 @@ window.addEventListener('resize', () => { if (window._lastResults) drawAllGantts
 
 // ---------- Init ----------
 entities = starterEntities();
+updateToggleButtons();
 refreshAll();
