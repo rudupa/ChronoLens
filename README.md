@@ -1,6 +1,6 @@
 # ChronoLens — RTOS Scheduling &amp; Timing Analyzer
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-online-3fb950?style=flat)](https://rudupa.github.io/ChronoLens/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-online-3fb950?style=flat)](https://rudupa.github.io/chronolens/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-a371f7?style=flat)](LICENSE)
 ![Vanilla JS](https://img.shields.io/badge/Built%20with-Vanilla%20JS%20%2B%20Canvas-d29922?style=flat)
 
@@ -35,7 +35,7 @@ Times are entered in **microseconds (µs)**; the timeline axis is shown in **mil
 
 ## Quick start
 
-Open the [live demo](https://rudupa.github.io/ChronoLens/) — it runs entirely in your
+Open the [live demo](https://rudupa.github.io/chronolens/) — it runs entirely in your
 browser. To run locally, just open `index.html` (no server needed).
 
 1. The app loads with a built-in starter set of ISRs and tasks.
@@ -92,7 +92,7 @@ ISR:
 
 ## Author
 
-**Ritesh Udupa** — [LinkedIn](https://www.linkedin.com/in/ritesh-udupa-4b694619/) · [GitHub](https://github.com/rudupa)
+**Ritesh Udupa** — [LinkedIn](https://www.linkedin.com/in/ritesh-udupa-4b694619/) · [GitHub](https://github.com/rudupa/chronolens)
 
 ## License
 
